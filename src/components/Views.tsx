@@ -805,6 +805,12 @@ export const InventoryView: React.FC<{
     window.scrollTo(0,0);
   };
 
+  const handleDeleteHistory = (id: string) => {
+    if(confirm('Tem certeza que deseja excluir este registro?')) {
+      setHistory(history.filter(h => h.id !== id));
+    }
+  };
+
   const openStockModal = (m: Material, type: 'ADD'|'LOSS') => {
     setStockModal({ isOpen: true, type, materialId: m.id, name: m.name });
     setStockQtyInput('');
@@ -945,10 +951,11 @@ export const InventoryView: React.FC<{
                  <th className="p-3 text-left">Tipo</th>
                  <th className="p-3 text-right">Qtd</th>
                  <th className="p-3 text-right">Resp.</th>
+                 {currentUser.role === Role.ADMIN && <th className="p-3 text-right">Ações</th>}
                </tr>
              </thead>
              <tbody>
-               {filteredHistory.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-400">Nenhum registro encontrado.</td></tr>}
+               {filteredHistory.length === 0 && <tr><td colSpan={currentUser.role === Role.ADMIN ? 6 : 5} className="p-4 text-center text-gray-400">Nenhum registro encontrado.</td></tr>}
                {filteredHistory.map(h => (
                  <tr key={h.id} className="border-b hover:bg-gray-50">
                     <td className="p-3 text-gray-600">{formatDate(h.date)}</td>
@@ -960,6 +967,11 @@ export const InventoryView: React.FC<{
                     </td>
                     <td className="p-3 text-right font-mono">{h.quantity}</td>
                     <td className="p-3 text-right text-gray-500 text-xs">{h.userName}</td>
+                    {currentUser.role === Role.ADMIN && (
+                       <td className="p-3 text-right">
+                          <button onClick={() => handleDeleteHistory(h.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
+                       </td>
+                    )}
                  </tr>
                ))}
              </tbody>
@@ -980,6 +992,7 @@ export const ProductView: React.FC<{
   const [selectedMatId, setSelectedMatId] = useState<string>('');
   const [selectedMatQty, setSelectedMatQty] = useState<number>(0);
   const [aiDescription, setAiDescription] = useState<string>('');
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const addIngredient = () => {
     if(!selectedMatId || selectedMatQty <= 0) return;
@@ -997,21 +1010,40 @@ export const ProductView: React.FC<{
     }, 0);
   };
 
-  const costPrice = calculateCost(newProduct.materials || []);
-  const handleCreate = () => {
+  const costPrice = calculateCost(newProduct.materials || []) || 0;
+
+  const handleSave = () => {
     if (!newProduct.name || !newProduct.sellingPrice) return;
-    const prod: Product = {
-      id: Date.now().toString(),
-      name: newProduct.name,
-      isKit: false,
-      materials: newProduct.materials || [],
-      sellingPrice: Number(newProduct.sellingPrice),
-      laborCost: Number(newProduct.laborCost || 0),
-    };
-    setProducts([...products, prod]);
+
+    if (editingId) {
+       setProducts(products.map(p => p.id === editingId ? { ...newProduct, id: p.id, materials: newProduct.materials || [] } as Product : p));
+       setEditingId(null);
+    } else {
+       const prod: Product = {
+          id: Date.now().toString(),
+          name: newProduct.name,
+          isKit: false,
+          materials: newProduct.materials || [],
+          sellingPrice: Number(newProduct.sellingPrice),
+          laborCost: Number(newProduct.laborCost || 0),
+       };
+       setProducts([...products, prod]);
+    }
     setNewProduct({ materials: [] });
     setAiDescription('');
   };
+
+  const startEdit = (p: Product) => {
+     setEditingId(p.id);
+     setNewProduct({ ...p });
+     window.scrollTo(0,0);
+  };
+  
+  const cancelEdit = () => {
+     setEditingId(null);
+     setNewProduct({ materials: [] });
+     setAiDescription('');
+  }
 
   const handleGenerateDescription = async () => {
     if (!newProduct.name) return;
@@ -1027,7 +1059,7 @@ export const ProductView: React.FC<{
        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
          {/* Creator */}
          <div className="bg-white p-6 rounded-lg shadow-sm border space-y-4">
-            <h3 className="font-semibold text-lg">Novo Produto / Kit</h3>
+            <h3 className="font-semibold text-lg">{editingId ? 'Editar Produto' : 'Novo Produto / Kit'}</h3>
             <div>
               <label className="block text-sm font-medium">Nome do Produto</label>
               <input className="w-full border rounded p-2" value={newProduct.name || ''} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
@@ -1072,7 +1104,14 @@ export const ProductView: React.FC<{
               </div>
             </div>
             <div className="bg-blue-50 p-2 rounded text-xs text-blue-800">Nota: As taxas de marketplace serão calculadas na tela de Vendas.</div>
-            <button onClick={handleCreate} className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium">Salvar Produto</button>
+            
+            <div className="flex gap-2">
+               {editingId && <button onClick={cancelEdit} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Cancelar</button>}
+               <button onClick={handleSave} className="flex-1 bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium">
+                  {editingId ? 'Atualizar Produto' : 'Salvar Produto'}
+               </button>
+            </div>
+
             <div className="pt-2 border-t">
               <button onClick={handleGenerateDescription} className="text-xs text-purple-600 flex items-center gap-1 mb-2 hover:underline"><BrainCircuit size={14}/> Gerar Descrição com IA</button>
               {aiDescription && <p className="text-xs text-gray-600 italic bg-gray-50 p-2 rounded border">{aiDescription}</p>}
@@ -1098,7 +1137,10 @@ export const ProductView: React.FC<{
                          <td className="p-2"><div className="font-bold">{p.name}</div><div className="text-xs text-gray-500">{p.materials.length} insumos</div></td>
                          <td className="p-2 text-right text-gray-600">{formatCurrency(c)}</td>
                          <td className="p-2 text-right font-bold">{formatCurrency(p.sellingPrice)}</td>
-                         <td className="p-2 text-right"><button onClick={() => setProducts(products.filter(x => x.id !== p.id))} className="text-red-500"><Trash2 size={14}/></button></td>
+                         <td className="p-2 text-right flex justify-end gap-2">
+                            <button onClick={() => startEdit(p)} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={14}/></button>
+                            <button onClick={() => setProducts(products.filter(x => x.id !== p.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
+                         </td>
                        </tr>
                      )
                   })}
