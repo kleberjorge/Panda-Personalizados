@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Material, Product, Sale, Expense, OperationalLog, OperationalTarget, Marketplace, Unit, PaymentMethod, User, Role, InventoryTransaction, PayrollTransaction, PayrollConfig, SystemConfig 
@@ -997,7 +997,7 @@ export const ProductView: React.FC<{
     }, 0);
   };
 
-  const costPrice = calculateCost(newProduct.materials);
+  const costPrice = calculateCost(newProduct.materials || []);
   const handleCreate = () => {
     if (!newProduct.name || !newProduct.sellingPrice) return;
     const prod: Product = {
