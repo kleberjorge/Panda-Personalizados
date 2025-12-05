@@ -1,3 +1,5 @@
+
+
 import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -5,7 +7,7 @@ import {
 } from '../types';
 import { 
   Plus, Trash2, AlertTriangle, TrendingUp, DollarSign, Package, 
-  Activity, Save, ShoppingCart, BrainCircuit, Edit2, MinusCircle, PlusCircle, FileText, Users, Shield, Clock, CheckSquare, Wallet, X, AlertCircle, CreditCard
+  Activity, Save, ShoppingCart, BrainCircuit, Edit2, MinusCircle, PlusCircle, FileText, Users, Shield, Clock, CheckSquare, Wallet, X, AlertCircle, CreditCard, Download, Upload
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { generateBusinessInsight, suggestProductDescription } from '../services/geminiService';
@@ -22,7 +24,7 @@ const InputMoney = ({ value, onChange, placeholder }: { value: number | undefine
     </div>
     <input
       type="number"
-      className="pl-8 block w-full border-gray-300 rounded-md border p-2 focus:ring-blue-500 focus:border-blue-500"
+      className="pl-8 block w-full border-gray-300 rounded-md border p-2 focus:ring-emerald-500 focus:border-emerald-500"
       placeholder={placeholder}
       value={value === undefined ? '' : value}
       onChange={e => onChange(parseFloat(e.target.value))}
@@ -72,13 +74,13 @@ export const DashboardView: React.FC<{
        <h2 className="text-2xl font-bold text-gray-800">Painel de Controle</h2>
        
        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-blue-600">
+          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-emerald-600">
              <div className="flex justify-between items-start">
                 <div>
                    <p className="text-xs font-bold text-gray-500 uppercase">Vendas Hoje</p>
                    <p className="text-2xl font-bold text-gray-800">{formatCurrency(totalSalesToday)}</p>
                 </div>
-                <DollarSign className="text-blue-100 bg-blue-600 rounded p-1 h-8 w-8" />
+                <DollarSign className="text-emerald-100 bg-emerald-600 rounded p-1 h-8 w-8" />
              </div>
              <p className="text-xs text-gray-500 mt-2">{salesToday.length} pedidos hoje</p>
           </div>
@@ -165,6 +167,687 @@ export const DashboardView: React.FC<{
              </div>
           </div>
        </div>
+    </div>
+  );
+};
+
+// --- Inventory View ---
+export const InventoryView: React.FC<{
+  materials: Material[];
+  setMaterials: React.Dispatch<React.SetStateAction<Material[]>>;
+  history: InventoryTransaction[];
+  setHistory: React.Dispatch<React.SetStateAction<InventoryTransaction[]>>;
+  currentUser: User;
+  onDeleteHistory: (id: string) => void;
+}> = ({ materials, setMaterials, history, setHistory, currentUser, onDeleteHistory }) => {
+  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ unit: Unit.UN, lossPercentage: 0 });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<'ALL' | 'LOSS'>('ALL');
+  
+  // Modal State
+  const [stockModal, setStockModal] = useState<{isOpen: boolean, type: 'ADD'|'LOSS', materialId: string, name: string}>({
+    isOpen: false, type: 'ADD', materialId: '', name: ''
+  });
+  const [stockQtyInput, setStockQtyInput] = useState<string>('');
+
+  const addMaterial = () => {
+    if (!newMaterial.name || !newMaterial.costPerUnit) return;
+    
+    if (editingId) {
+      setMaterials(materials.map(m => m.id === editingId ? { ...m, ...newMaterial as Material } : m));
+      setEditingId(null);
+    } else {
+      const item: Material = {
+        id: Date.now().toString(),
+        name: newMaterial.name,
+        unit: newMaterial.unit || Unit.UN,
+        costPerUnit: Number(newMaterial.costPerUnit),
+        currentStock: Number(newMaterial.currentStock || 0),
+        minStock: Number(newMaterial.minStock || 0),
+        lossPercentage: Number(newMaterial.lossPercentage || 0)
+      };
+      setMaterials([...materials, item]);
+    }
+    setNewMaterial({ unit: Unit.UN, lossPercentage: 0, name: '', costPerUnit: 0, currentStock: 0, minStock: 0 });
+  };
+
+  const handleEdit = (m: Material) => {
+    setEditingId(m.id);
+    setNewMaterial(m);
+    window.scrollTo(0,0);
+  };
+
+  const openStockModal = (m: Material, type: 'ADD'|'LOSS') => {
+    setStockModal({ isOpen: true, type, materialId: m.id, name: m.name });
+    setStockQtyInput('');
+  };
+
+  const confirmStockUpdate = () => {
+    const val = parseFloat(stockQtyInput);
+    if (!val || val <= 0) {
+      alert("Por favor digite uma quantidade válida");
+      return;
+    }
+    
+    setMaterials(materials.map(m => {
+      if (m.id === stockModal.materialId) {
+        const newStock = stockModal.type === 'ADD' ? m.currentStock + val : m.currentStock - val;
+        return { ...m, currentStock: newStock };
+      }
+      return m;
+    }));
+
+    // LOG TRANSACTION
+    const log: InventoryTransaction = {
+      id: Date.now().toString(),
+      date: new Date().toISOString(),
+      materialId: stockModal.materialId,
+      materialName: stockModal.name,
+      type: stockModal.type,
+      quantity: val,
+      userName: currentUser.name,
+      userId: currentUser.id // NEW: Track User ID
+    };
+    setHistory([log, ...history]);
+
+    setStockModal({ ...stockModal, isOpen: false });
+  };
+
+  const filteredHistory = historyFilter === 'ALL' ? history : history.filter(h => h.type === 'LOSS');
+
+  return (
+    <div className="space-y-6 relative">
+      {/* Stock Update Modal */}
+      {stockModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+             <h3 className={`text-lg font-bold mb-2 flex items-center gap-2 ${stockModal.type === 'ADD' ? 'text-green-700' : 'text-red-700'}`}>
+               {stockModal.type === 'ADD' ? <PlusCircle /> : <MinusCircle />}
+               {stockModal.type === 'ADD' ? 'Adicionar Estoque' : 'Registrar Perda/Uso'}
+             </h3>
+             <p className="text-gray-600 text-sm mb-4">
+               {stockModal.type === 'ADD' ? `Entrada de material para: ${stockModal.name}` : `Saída de material para: ${stockModal.name}`}
+             </p>
+             <input 
+                autoFocus
+                type="number" 
+                className="w-full border-2 border-gray-300 rounded p-2 text-xl text-center mb-4 focus:border-blue-500 outline-none"
+                placeholder="Quantidade"
+                value={stockQtyInput}
+                onChange={e => setStockQtyInput(e.target.value)}
+             />
+             <div className="flex gap-3">
+               <button onClick={() => setStockModal({...stockModal, isOpen: false})} className="flex-1 py-2 bg-gray-200 rounded font-bold text-gray-700 hover:bg-gray-300">Cancelar</button>
+               <button onClick={confirmStockUpdate} className={`flex-1 py-2 rounded font-bold text-white ${stockModal.type === 'ADD' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                 Confirmar
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Package /> Gestão de Insumos</h2>
+      
+      {/* Add/Edit Form */}
+      <div className={`p-4 rounded-lg shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-4 items-end ${editingId ? 'bg-yellow-50 border-yellow-200' : 'bg-white'}`}>
+        <div className="col-span-1 md:col-span-3 text-sm font-bold text-gray-500 uppercase mb-2 border-b pb-1">
+          {editingId ? 'Editando Insumo' : 'Novo Insumo'}
+        </div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">Nome do Insumo</label><input type="text" className="block w-full border rounded-md p-2" value={newMaterial.name || ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">Unidade</label><select className="block w-full border rounded-md p-2" value={newMaterial.unit} onChange={e => setNewMaterial({...newMaterial, unit: e.target.value as Unit})}>{Object.values(Unit).map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">Custo Unit.</label><InputMoney value={newMaterial.costPerUnit} onChange={v => setNewMaterial({...newMaterial, costPerUnit: v})} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">Estoque Atual</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.currentStock} onChange={e => setNewMaterial({...newMaterial, currentStock: parseFloat(e.target.value)})} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">Estoque Mínimo (Alerta)</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.minStock} onChange={e => setNewMaterial({...newMaterial, minStock: parseFloat(e.target.value)})} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 mb-1">% Perda Aceitável</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.lossPercentage} onChange={e => setNewMaterial({...newMaterial, lossPercentage: parseFloat(e.target.value)})} /></div>
+        <div className="flex gap-2">
+          {editingId && <button onClick={() => { setEditingId(null); setNewMaterial({unit: Unit.UN}); }} className="bg-gray-500 text-white px-4 py-2 rounded-md">Cancelar</button>}
+          <button onClick={addMaterial} className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex items-center gap-2 justify-center"><Save size={18} /> {editingId ? 'Salvar' : 'Cadastrar'}</button>
+        </div>
+      </div>
+
+      {/* List */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nome</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estoque</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ações Rápidas</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200 text-sm">
+            {materials.map(m => {
+              const isLowStock = m.currentStock <= m.minStock;
+              return (
+                <tr key={m.id}>
+                  <td className="px-4 py-3 font-medium text-gray-800">{m.name}</td>
+                  <td className="px-4 py-3">{m.currentStock} {m.unit}</td>
+                  <td className="px-4 py-3">
+                    {isLowStock ? <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 items-center gap-1"><AlertTriangle size={12} /> Baixo</span> : <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">OK</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium flex justify-end gap-2">
+                    <button title="Dar Entrada" onClick={() => openStockModal(m, 'ADD')} className="text-green-600 hover:bg-green-50 p-1 rounded"><PlusCircle size={18}/></button>
+                    <button title="Registrar Perda" onClick={() => openStockModal(m, 'LOSS')} className="text-orange-600 hover:bg-orange-50 p-1 rounded"><MinusCircle size={18}/></button>
+                    <button title="Editar" onClick={() => handleEdit(m)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit2 size={18}/></button>
+                    <button title="Excluir" onClick={() => setMaterials(materials.filter(mat => mat.id !== m.id))} className="text-red-600 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Logs Table */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-4">
+           <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2"><FileText/> Histórico de Movimentações</h3>
+           <div className="flex gap-2">
+             <button onClick={() => setHistoryFilter('ALL')} className={`px-3 py-1 rounded text-sm ${historyFilter==='ALL' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>Todos</button>
+             <button onClick={() => setHistoryFilter('LOSS')} className={`px-3 py-1 rounded text-sm ${historyFilter==='LOSS' ? 'bg-red-600 text-white' : 'bg-gray-200'}`}>Apenas Perdas</button>
+           </div>
+        </div>
+        <div className="bg-white rounded border max-h-60 overflow-y-auto">
+           <table className="min-w-full text-sm">
+             <thead className="bg-gray-100 sticky top-0">
+               <tr>
+                 <th className="p-3 text-left">Data</th>
+                 <th className="p-3 text-left">Insumo</th>
+                 <th className="p-3 text-left">Tipo</th>
+                 <th className="p-3 text-right">Qtd</th>
+                 <th className="p-3 text-right">Resp.</th>
+                 {currentUser.role === Role.ADMIN && <th className="p-3 text-right">Ação</th>}
+               </tr>
+             </thead>
+             <tbody>
+               {filteredHistory.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-gray-400">Nenhum registro encontrado.</td></tr>}
+               {filteredHistory.map(h => (
+                 <tr key={h.id} className="border-b hover:bg-gray-50">
+                    <td className="p-3 text-gray-600">{formatDate(h.date)}</td>
+                    <td className="p-3 font-medium">{h.materialName}</td>
+                    <td className="p-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${h.type === 'ADD' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {h.type === 'ADD' ? 'ENTRADA' : 'PERDA'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-mono">{h.quantity}</td>
+                    <td className="p-3 text-right text-gray-500 text-xs">{h.userName}</td>
+                    {currentUser.role === Role.ADMIN && (
+                       <td className="p-3 text-right">
+                          <button onClick={() => onDeleteHistory(h.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                       </td>
+                    )}
+                 </tr>
+               ))}
+             </tbody>
+           </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Product View ---
+export const ProductView: React.FC<{
+  products: Product[];
+  setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
+  materials: Material[];
+}> = ({ products, setProducts, materials }) => {
+  const [newProduct, setNewProduct] = useState<Partial<Product>>({ materials: [] });
+  const [selectedMatId, setSelectedMatId] = useState<string>('');
+  const [selectedMatQty, setSelectedMatQty] = useState<number>(0);
+  const [aiDescription, setAiDescription] = useState<string>('');
+  const [editingProdId, setEditingProdId] = useState<string | null>(null);
+
+  const addIngredient = () => {
+    if(!selectedMatId || selectedMatQty <= 0) return;
+    const current = newProduct.materials || [];
+    setNewProduct({ ...newProduct, materials: [...current, { materialId: selectedMatId, quantity: selectedMatQty }] });
+    setSelectedMatId('');
+    setSelectedMatQty(0);
+  };
+
+  const calculateCost = (prodItems: Product['materials']) => {
+    if (!prodItems) return 0;
+    return prodItems.reduce((acc, item) => {
+      const mat = materials.find(m => m.id === item.materialId);
+      return acc + (mat ? mat.costPerUnit * item.quantity : 0);
+    }, 0);
+  };
+
+  const costPrice = calculateCost(newProduct.materials || []);
+
+  const handleCreateOrUpdate = () => {
+    if (!newProduct.name || !newProduct.sellingPrice) return;
+    
+    if (editingProdId) {
+        // Update Existing
+        setProducts(products.map(p => p.id === editingProdId ? {
+            ...p,
+            name: newProduct.name!,
+            isKit: false,
+            materials: newProduct.materials || [],
+            sellingPrice: Number(newProduct.sellingPrice),
+            laborCost: Number(newProduct.laborCost || 0),
+        } : p));
+        setEditingProdId(null);
+    } else {
+        // Create New
+        const prod: Product = {
+            id: Date.now().toString(),
+            name: newProduct.name,
+            isKit: false,
+            materials: newProduct.materials || [],
+            sellingPrice: Number(newProduct.sellingPrice),
+            laborCost: Number(newProduct.laborCost || 0),
+        };
+        setProducts([...products, prod]);
+    }
+    
+    setNewProduct({ materials: [] });
+    setAiDescription('');
+  };
+
+  const handleEdit = (p: Product) => {
+     setEditingProdId(p.id);
+     setNewProduct(p);
+     window.scrollTo(0,0);
+  };
+
+  const handleGenerateDescription = async () => {
+    if (!newProduct.name) return;
+    const matNames = newProduct.materials?.map(pm => materials.find(m => m.id === pm.materialId)?.name || '') || [];
+    const desc = await suggestProductDescription(newProduct.name, matNames);
+    setAiDescription(desc);
+  };
+
+  return (
+    <div className="space-y-6">
+       <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><ShoppingCart /> Produtos e Kits</h2>
+
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+         {/* Creator */}
+         <div className={`p-6 rounded-lg shadow-sm border space-y-4 ${editingProdId ? 'bg-amber-50 border-amber-200' : 'bg-white'}`}>
+            <div className="flex justify-between items-center">
+                 <h3 className="font-semibold text-lg text-gray-800">{editingProdId ? '✏️ Editando Produto' : 'Novo Produto / Kit'}</h3>
+                 {editingProdId && <button onClick={() => { setEditingProdId(null); setNewProduct({ materials: [] }); }} className="text-sm text-gray-500 hover:underline">Cancelar Edição</button>}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium">Nome do Produto</label>
+              <input className="w-full border rounded p-2" value={newProduct.name || ''} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+            </div>
+
+            <div className="bg-gray-50 p-3 rounded border">
+              <h4 className="text-sm font-bold mb-2">Receita / Composição</h4>
+              <div className="flex gap-2 mb-2">
+                <select className="border rounded p-1 flex-1" value={selectedMatId} onChange={e => setSelectedMatId(e.target.value)}>
+                  <option value="">Selecione Insumo</option>
+                  {materials.map(m => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+                </select>
+                <input type="number" placeholder="Qtd" className="border rounded p-1 w-20" value={selectedMatQty} onChange={e => setSelectedMatQty(Number(e.target.value))} />
+                <button onClick={addIngredient} className="bg-green-600 text-white px-2 rounded"><Plus size={16}/></button>
+              </div>
+              <ul className="text-sm space-y-1">
+                {newProduct.materials?.map((pm, idx) => {
+                  const m = materials.find(mat => mat.id === pm.materialId);
+                  return (
+                    <li key={idx} className="flex justify-between border-b pb-1 items-center">
+                        <span>{m?.name} (x{pm.quantity})</span> 
+                        <button onClick={() => {
+                            const newMats = [...(newProduct.materials || [])];
+                            newMats.splice(idx, 1);
+                            setNewProduct({...newProduct, materials: newMats});
+                        }} className="text-red-500"><Trash2 size={12}/></button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="text-right mt-2 font-bold text-gray-600">Custo Material: {formatCurrency(costPrice)}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm">Mão de Obra</label>
+                <InputMoney value={newProduct.laborCost} onChange={v => setNewProduct({...newProduct, laborCost: v})} />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-blue-700">Preço Venda Base</label>
+                <InputMoney value={newProduct.sellingPrice} onChange={v => setNewProduct({...newProduct, sellingPrice: v})} />
+              </div>
+            </div>
+            <div className="bg-blue-50 p-2 rounded text-xs text-blue-800">Nota: As taxas de marketplace serão calculadas na tela de Vendas.</div>
+            <button onClick={handleCreateOrUpdate} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 font-medium shadow">
+                {editingProdId ? 'Atualizar Produto' : 'Salvar Produto'}
+            </button>
+            <div className="pt-2 border-t">
+              <button onClick={handleGenerateDescription} className="text-xs text-purple-600 flex items-center gap-1 mb-2 hover:underline"><BrainCircuit size={14}/> Gerar Descrição com IA</button>
+              {aiDescription && <p className="text-xs text-gray-600 italic bg-gray-50 p-2 rounded border">{aiDescription}</p>}
+            </div>
+         </div>
+
+         {/* List */}
+         <div className="bg-white rounded shadow overflow-hidden h-full overflow-y-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">Produto</th>
+                    <th className="p-2 text-right">Custo Base</th>
+                    <th className="p-2 text-right">Preço Venda</th>
+                    <th className="p-2 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map(p => {
+                     const c = calculateCost(p.materials) + p.laborCost;
+                     return (
+                       <tr key={p.id} className="border-t hover:bg-gray-50">
+                         <td className="p-2"><div className="font-bold">{p.name}</div><div className="text-xs text-gray-500">{p.materials.length} insumos</div></td>
+                         <td className="p-2 text-right text-gray-600">{formatCurrency(c)}</td>
+                         <td className="p-2 text-right font-bold">{formatCurrency(p.sellingPrice)}</td>
+                         <td className="p-2 text-right flex justify-end gap-2">
+                             <button onClick={() => handleEdit(p)} className="text-blue-600 bg-blue-50 p-1 rounded hover:bg-blue-100"><Edit2 size={16}/></button>
+                             <button onClick={() => setProducts(products.filter(x => x.id !== p.id))} className="text-red-600 bg-red-50 p-1 rounded hover:bg-red-100"><Trash2 size={16}/></button>
+                         </td>
+                       </tr>
+                     )
+                  })}
+                </tbody>
+              </table>
+         </div>
+       </div>
+    </div>
+  );
+};
+
+// --- SalesAndOpsView ---
+export const SalesAndOpsView: React.FC<{
+  products: Product[];
+  materials: Material[];
+  setMaterials: React.Dispatch<React.SetStateAction<Material[]>>;
+  sales: Sale[];
+  setSales: React.Dispatch<React.SetStateAction<Sale[]>>;
+  logs: OperationalLog[];
+  setLogs: React.Dispatch<React.SetStateAction<OperationalLog[]>>;
+  targets: OperationalTarget[];
+  marketplaces: Marketplace[];
+  currentUser: User;
+  onDeleteSale: (id: string) => void;
+}> = ({ products, materials, setMaterials, sales, setSales, logs, setLogs, targets, marketplaces, currentUser, onDeleteSale }) => {
+  const [tab, setTab] = useState<'SALES'|'OPS'>('SALES');
+  const [newSale, setNewSale] = useState<{ quantity: number; paymentMethod: PaymentMethod }>({ quantity: 1, paymentMethod: PaymentMethod.PIX });
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedMkpId, setSelectedMkpId] = useState('');
+  
+  // Ops state
+  const [opsMetricId, setOpsMetricId] = useState('');
+  const [opsValue, setOpsValue] = useState(0);
+
+  // Stock Alert Logic
+  const [stockAlertModal, setStockAlertModal] = useState<{isOpen: boolean, missingItems: any[]}>({ isOpen: false, missingItems: [] });
+  const [pendingSale, setPendingSale] = useState<any>(null);
+
+  const [customerName, setCustomerName] = useState('');
+
+  const checkStockAvailability = (prodId: string, quantity: number) => {
+     const product = products.find(p => p.id === prodId);
+     if (!product) return [];
+
+     const missing: any[] = [];
+     product.materials.forEach(req => {
+        const mat = materials.find(m => m.id === req.materialId);
+        if (mat) {
+           // Calculate total needed including what's already in the cart if we had one, 
+           // but here we do direct sale, so check current stock.
+           const needed = req.quantity * quantity;
+           if (mat.currentStock - needed < mat.minStock) {
+              missing.push({ 
+                 name: mat.name, 
+                 current: mat.currentStock, 
+                 needed, 
+                 remaining: mat.currentStock - needed 
+              });
+           }
+        }
+     });
+     return missing;
+  };
+
+  const executeSale = (saleData: any) => {
+     const { product, mkp, quantity } = saleData;
+     
+     const totalAmount = product.sellingPrice * quantity;
+     const varFee = totalAmount * (mkp.variableFeePercent / 100);
+     const adsFee = totalAmount * (mkp.adsFeePercent / 100);
+     const tax = totalAmount * (mkp.taxPercent / 100);
+     const totalFees = mkp.fixedFee + varFee + adsFee + tax + mkp.shippingCost;
+     const netRevenue = totalAmount - totalFees;
+
+     const costSnapshot = product.materials.reduce((acc: number, pm: any) => {
+        const m = materials.find(mat => mat.id === pm.materialId);
+        return acc + (m ? m.costPerUnit * pm.quantity : 0);
+     }, 0) * quantity + (product.laborCost * quantity);
+
+     const sale: Sale = {
+       id: Date.now().toString(),
+       date: new Date().toISOString(),
+       items: [{ productId: product.id, quantity: quantity, unitPrice: product.sellingPrice }],
+       marketplaceId: mkp.id,
+       platform: mkp.name,
+       paymentMethod: newSale.paymentMethod as PaymentMethod,
+       totalAmount,
+       netRevenue,
+       costSnapshot,
+       feeSnapshot: totalFees,
+       status: 'PENDING',
+       customerName: customerName // New
+     };
+
+     setSales([sale, ...sales]);
+
+     // Deduct Stock
+     const newMaterials = [...materials];
+     product.materials.forEach((pm: any) => {
+        const mIndex = newMaterials.findIndex(m => m.id === pm.materialId);
+        if (mIndex >= 0) {
+          newMaterials[mIndex].currentStock -= (pm.quantity * quantity);
+        }
+     });
+     setMaterials(newMaterials);
+
+     // Reset
+     setNewSale({ quantity: 1, paymentMethod: PaymentMethod.PIX });
+     setSelectedProductId('');
+     setCustomerName('');
+     setStockAlertModal({ isOpen: false, missingItems: [] });
+     setPendingSale(null);
+  };
+
+  const initiateSale = () => {
+    const product = products.find(p => p.id === selectedProductId);
+    const mkp = marketplaces.find(m => m.id === selectedMkpId);
+    if (!product || !mkp || !newSale.quantity) return;
+    const quantity = Number(newSale.quantity);
+    
+    const missing = checkStockAvailability(product.id, quantity);
+    const saleData = { product, mkp, quantity };
+
+    if (missing.length > 0) {
+       setPendingSale(saleData);
+       setStockAlertModal({ isOpen: true, missingItems: missing });
+    } else {
+       executeSale(saleData);
+    }
+  };
+
+  const updateStatus = (saleId: string, newStatus: Sale['status']) => {
+     setSales(sales.map(s => s.id === saleId ? { ...s, status: newStatus } : s));
+  };
+
+  const handleLogOps = () => {
+    const target = targets.find(t => t.id === opsMetricId);
+    if (!target || opsValue <= 0) return;
+    
+    setLogs([{
+      id: Date.now().toString(),
+      date: new Date().toISOString(),
+      metricName: target.metricName,
+      value: Number(opsValue)
+    }, ...logs]);
+    setOpsValue(0);
+  };
+
+  return (
+    <div className="space-y-6 relative">
+      {/* Stock Alert Modal */}
+      {stockAlertModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-4">
+           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md border-l-4 border-red-500">
+              <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center gap-2"><AlertTriangle /> Atenção: Estoque Insuficiente</h3>
+              <p className="text-sm text-gray-600 mb-4">A venda deste produto fará com que os seguintes insumos fiquem abaixo do mínimo ou negativos:</p>
+              <ul className="bg-red-50 p-3 rounded mb-6 space-y-2 text-sm">
+                 {stockAlertModal.missingItems.map((m, idx) => (
+                    <li key={idx} className="flex justify-between">
+                       <span className="font-bold text-gray-700">{m.name}</span>
+                       <span className="text-red-600">Restará: {m.remaining.toFixed(2)}</span>
+                    </li>
+                 ))}
+              </ul>
+              <div className="flex gap-3">
+                 <button onClick={() => setStockAlertModal({isOpen: false, missingItems: []})} className="flex-1 py-2 border border-gray-300 rounded text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
+                 <button onClick={() => executeSale(pendingSale)} className="flex-1 py-2 bg-red-600 text-white rounded font-bold hover:bg-red-700">Confirmar Venda Assim Mesmo</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      <div className="flex border-b">
+         <button onClick={() => setTab('SALES')} className={`px-6 py-3 font-bold ${tab==='SALES' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Vendas</button>
+         <button onClick={() => setTab('OPS')} className={`px-6 py-3 font-bold ${tab==='OPS' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Produção</button>
+      </div>
+
+      {tab === 'SALES' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+           <div className="bg-white p-6 rounded shadow lg:col-span-1 h-fit">
+              <h3 className="font-bold text-lg mb-4">Nova Venda</h3>
+              <div className="space-y-4">
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500">Produto</label>
+                   <select className="w-full border p-2 rounded" value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)}>
+                     <option value="">Selecione...</option>
+                     {products.map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.sellingPrice)})</option>)}
+                   </select>
+                 </div>
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500">Canal de Venda</label>
+                   <select className="w-full border p-2 rounded" value={selectedMkpId} onChange={e => setSelectedMkpId(e.target.value)}>
+                     <option value="">Selecione...</option>
+                     {marketplaces.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                   </select>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500">Cliente (Opcional)</label>
+                    <input type="text" className="w-full border p-2 rounded" value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Nome do cliente..." />
+                 </div>
+                 <div className="grid grid-cols-2 gap-2">
+                    <div>
+                       <label className="block text-xs font-bold text-gray-500">Qtd</label>
+                       <input type="number" className="w-full border p-2 rounded" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: Number(e.target.value)})} />
+                    </div>
+                    <div>
+                       <label className="block text-xs font-bold text-gray-500">Pagamento</label>
+                       <select className="w-full border p-2 rounded" value={newSale.paymentMethod} onChange={e => setNewSale({...newSale, paymentMethod: e.target.value as PaymentMethod})}>
+                          {Object.values(PaymentMethod).map(pm => <option key={pm} value={pm}>{pm}</option>)}
+                       </select>
+                    </div>
+                 </div>
+                 <button onClick={initiateSale} className="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700">Registrar Venda</button>
+              </div>
+           </div>
+           <div className="lg:col-span-2 bg-white rounded shadow overflow-hidden flex flex-col">
+              <div className="p-4 border-b bg-gray-50 font-bold text-gray-700">Fila de Produção (Últimos Pedidos)</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100">
+                    <tr>
+                        <th className="p-3 text-left">Data</th>
+                        <th className="p-3 text-left">Cliente</th>
+                        <th className="p-3 text-left">Produto</th>
+                        <th className="p-3 text-center">Status</th>
+                        {currentUser.role === Role.ADMIN && <th className="p-3 text-center">Ação</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sales.slice(0, 10).map(s => (
+                        <tr key={s.id} className="border-b">
+                          <td className="p-3">{formatDate(s.date)}</td>
+                          <td className="p-3">{s.customerName || '-'}</td>
+                          <td className="p-3 font-medium">{products.find(p => p.id === s.items[0].productId)?.name} (x{s.items[0].quantity})</td>
+                          <td className="p-3 text-center">
+                              <select 
+                                value={s.status} 
+                                onChange={e => updateStatus(s.id, e.target.value as any)}
+                                className={`p-1 rounded text-xs font-bold border-none outline-none cursor-pointer ${
+                                  s.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : 
+                                  s.status === 'IN_PRODUCTION' ? 'bg-blue-100 text-blue-800' : 
+                                  'bg-green-100 text-green-800'
+                                }`}
+                              >
+                                <option value="PENDING">PENDENTE</option>
+                                <option value="IN_PRODUCTION">EM PRODUÇÃO</option>
+                                <option value="COMPLETED">ENVIADO</option>
+                              </select>
+                          </td>
+                          {currentUser.role === Role.ADMIN && (
+                             <td className="p-3 text-center">
+                                <button onClick={() => onDeleteSale(s.id)} className="text-red-500 hover:bg-red-50 p-2 rounded"><Trash2 size={16}/></button>
+                             </td>
+                          )}
+                        </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {tab === 'OPS' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+           <div className="bg-white p-6 rounded shadow h-fit">
+              <h3 className="font-bold text-lg mb-4">Apontamento de Produção</h3>
+              <div className="space-y-4">
+                 <div>
+                    <label className="block text-sm font-medium">Meta / Tarefa</label>
+                    <select className="w-full border p-2 rounded" value={opsMetricId} onChange={e => setOpsMetricId(e.target.value)}>
+                       <option value="">Selecione...</option>
+                       {targets.map(t => <option key={t.id} value={t.id}>{t.metricName}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-sm font-medium">Quantidade Realizada</label>
+                    <input type="number" className="w-full border p-2 rounded" value={opsValue} onChange={e => setOpsValue(parseFloat(e.target.value))} />
+                 </div>
+                 <button onClick={handleLogOps} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">Registrar</button>
+              </div>
+           </div>
+           <div className="bg-white rounded shadow overflow-hidden">
+              <div className="p-4 border-b bg-gray-50 font-bold text-gray-700">Histórico de Produção</div>
+              <ul className="divide-y">
+                 {logs.map(l => (
+                    <li key={l.id} className="p-4 flex justify-between items-center">
+                       <div>
+                          <div className="font-bold text-gray-800">{l.metricName}</div>
+                          <div className="text-xs text-gray-500">{formatDate(l.date)}</div>
+                       </div>
+                       <div className="text-xl font-bold text-blue-600">+{l.value}</div>
+                    </li>
+                 ))}
+              </ul>
+           </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -421,9 +1104,9 @@ export const PayrollView: React.FC<{
        {selectedUser && (
          <div className="bg-white rounded shadow border min-h-[400px]">
             <div className="flex border-b">
-               <button onClick={() => setTab('CONFIG')} className={`px-6 py-3 font-bold ${tab==='CONFIG' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Configuração</button>
-               <button onClick={() => setTab('ADVANCE')} className={`px-6 py-3 font-bold ${tab==='ADVANCE' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Vales & Adiantamentos</button>
-               <button onClick={() => setTab('PAYROLL')} className={`px-6 py-3 font-bold ${tab==='PAYROLL' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Folha de Pagamento</button>
+               <button onClick={() => setTab('CONFIG')} className={`px-6 py-3 font-bold ${tab==='CONFIG' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Configuração</button>
+               <button onClick={() => setTab('ADVANCE')} className={`px-6 py-3 font-bold ${tab==='ADVANCE' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Vales & Adiantamentos</button>
+               <button onClick={() => setTab('PAYROLL')} className={`px-6 py-3 font-bold ${tab==='PAYROLL' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Folha de Pagamento</button>
             </div>
 
             <div className="p-6">
@@ -527,7 +1210,7 @@ export const PayrollView: React.FC<{
                            const totalEstimado = (base + bonus) - advances - penaltyAmount;
 
                            return (
-                             <div key={slip.id} className={`border rounded p-4 ${slip.status === 'PAID' ? 'bg-gray-50 border-gray-200' : 'bg-white border-blue-200 shadow-md'}`}>
+                             <div key={slip.id} className={`border rounded p-4 ${slip.status === 'PAID' ? 'bg-gray-50 border-gray-200' : 'bg-white border-emerald-200 shadow-md'}`}>
                                 <div className="flex justify-between items-start mb-2">
                                    <div>
                                       <h4 className="font-bold text-lg text-gray-800">{slip.description}</h4>
@@ -554,7 +1237,7 @@ export const PayrollView: React.FC<{
                                          </div>
                                       )}
 
-                                      <div className="border-t pt-1 mt-1 flex justify-between font-bold text-lg text-blue-800"><span>Total a Pagar:</span> <span>{formatCurrency(totalEstimado)}</span></div>
+                                      <div className="border-t pt-1 mt-1 flex justify-between font-bold text-lg text-emerald-800"><span>Total a Pagar:</span> <span>{formatCurrency(totalEstimado)}</span></div>
                                       <div className="text-xs text-gray-500 text-right mt-1">Ref. Margem Contribuição Mês: {formatCurrency(monthContribution)}</div>
                                    </div>
                                 ) : (
@@ -565,7 +1248,7 @@ export const PayrollView: React.FC<{
                                 )}
 
                                 {slip.status === 'PENDING' && (
-                                   <button onClick={() => handleConfirmPayment(slip, penaltyAmount)} className="w-full py-2 bg-green-600 text-white font-bold rounded hover:bg-green-700 transition">
+                                   <button onClick={() => handleConfirmPayment(slip, penaltyAmount)} className="w-full py-2 bg-emerald-600 text-white font-bold rounded hover:bg-emerald-700 transition">
                                       Confirmar Pagamento & Lançar Despesa
                                    </button>
                                 )}
@@ -581,856 +1264,6 @@ export const PayrollView: React.FC<{
             </div>
          </div>
        )}
-    </div>
-  );
-};
-
-// --- Settings View ---
-export const SettingsView: React.FC<{
-  marketplaces: Marketplace[];
-  setMarketplaces: React.Dispatch<React.SetStateAction<Marketplace[]>>;
-  targets: OperationalTarget[];
-  setTargets: React.Dispatch<React.SetStateAction<OperationalTarget[]>>;
-  users: User[];
-  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
-  systemConfig: SystemConfig;
-  setSystemConfig: React.Dispatch<React.SetStateAction<SystemConfig>>;
-}> = ({ marketplaces, setMarketplaces, targets, setTargets, users, setUsers, systemConfig, setSystemConfig }) => {
-  
-  const [mkp, setMkp] = useState<Partial<Marketplace>>({});
-  const [target, setTarget] = useState<Partial<OperationalTarget>>({});
-  const [newUser, setNewUser] = useState<Partial<User>>({ role: Role.EMPLOYEE });
-  const [activeTab, setActiveTab] = useState<'GENERAL'|'STORES'|'GOALS'|'USERS'>('GENERAL');
-
-  const addMkp = () => {
-    if (!mkp.name) return;
-    const newMkp: Marketplace = {
-      id: Date.now().toString(),
-      name: mkp.name,
-      fixedFee: Number(mkp.fixedFee || 0),
-      variableFeePercent: Number(mkp.variableFeePercent || 0),
-      adsFeePercent: Number(mkp.adsFeePercent || 0),
-      shippingCost: Number(mkp.shippingCost || 0),
-      taxPercent: Number(mkp.taxPercent || 0),
-    };
-    setMarketplaces([...marketplaces, newMkp]);
-    setMkp({});
-  };
-
-  const addTarget = () => {
-    if (!target.metricName) return;
-    const newTarget: OperationalTarget = {
-      id: Date.now().toString(),
-      metricName: target.metricName,
-      targetDaily: Number(target.targetDaily || 0),
-      unitRate: Number(target.unitRate || 0),
-    };
-    setTargets([...targets, newTarget]);
-    setTarget({});
-  };
-
-  const addUser = () => {
-    if (!newUser.name || !newUser.pin) {
-      alert("Nome e senha são obrigatórios.");
-      return;
-    }
-    setUsers([...users, { 
-      id: Date.now().toString(), 
-      name: newUser.name, 
-      pin: newUser.pin, 
-      role: newUser.role || Role.EMPLOYEE 
-    }]);
-    setNewUser({ role: Role.EMPLOYEE, name: '', pin: '' });
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex space-x-4 border-b overflow-x-auto">
-        <button onClick={() => setActiveTab('GENERAL')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'GENERAL' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Geral / Avisos</button>
-        <button onClick={() => setActiveTab('STORES')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'STORES' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Lojas & Taxas</button>
-        <button onClick={() => setActiveTab('GOALS')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'GOALS' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Metas & Bônus</button>
-        <button onClick={() => setActiveTab('USERS')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'USERS' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Usuários</button>
-      </div>
-
-      {activeTab === 'GENERAL' && (
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><FileText size={20}/> Quadro de Avisos (Relatório do Dia)</h3>
-           <p className="text-sm text-gray-500 mb-2">O texto abaixo aparecerá para os funcionários ao clicarem em "Relatório do Dia". Use para comunicar tarefas ou avisos importantes.</p>
-           <textarea 
-             className="w-full h-40 border p-4 rounded bg-yellow-50 focus:ring-2 focus:ring-yellow-400 outline-none"
-             placeholder="Ex: Hoje precisamos focar na produção dos kits de dia das mães..."
-             value={systemConfig.dailyMessage}
-             onChange={e => setSystemConfig({...systemConfig, dailyMessage: e.target.value})}
-           />
-        </div>
-      )}
-
-      {activeTab === 'STORES' && (
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><ShoppingCart size={20}/> Cadastro de Lojas</h3>
-          <div className="space-y-4 mb-6 bg-gray-50 p-4 rounded">
-            <div>
-              <label className="block text-sm font-medium">Nome da Loja (ex: ML Premium)</label>
-              <input className="w-full border p-2 rounded" value={mkp.name || ''} onChange={e => setMkp({...mkp, name: e.target.value})} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Taxa Fixa</label><InputMoney value={mkp.fixedFee} onChange={v => setMkp({...mkp, fixedFee: v})} /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Comissão (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.variableFeePercent || ''} onChange={e => setMkp({...mkp, variableFeePercent: parseFloat(e.target.value)})} /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">ADS / MKT (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.adsFeePercent || ''} onChange={e => setMkp({...mkp, adsFeePercent: parseFloat(e.target.value)})} /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Imposto (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.taxPercent || ''} onChange={e => setMkp({...mkp, taxPercent: parseFloat(e.target.value)})} /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Frete Médio</label><InputMoney value={mkp.shippingCost} onChange={v => setMkp({...mkp, shippingCost: v})} /></div>
-            </div>
-            <button onClick={addMkp} className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Salvar Loja</button>
-          </div>
-          <ul className="space-y-2">
-            {marketplaces.map(m => (
-              <li key={m.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
-                <div><div className="font-bold">{m.name}</div><div className="text-xs text-gray-500">{m.variableFeePercent}% Com. + {formatCurrency(m.fixedFee)} Fix. | ADS: {m.adsFeePercent}% | Frete: {formatCurrency(m.shippingCost)}</div></div>
-                <button onClick={() => setMarketplaces(marketplaces.filter(x => x.id !== m.id))} className="text-red-500"><Trash2 size={16}/></button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {activeTab === 'GOALS' && (
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Activity size={20}/> Configuração de Metas</h3>
-          <div className="space-y-4 mb-6 bg-gray-50 p-4 rounded">
-            <div><label className="block text-sm font-medium">Nome da Métrica</label><input className="w-full border p-2 rounded" value={target.metricName || ''} onChange={e => setTarget({...target, metricName: e.target.value})} /></div>
-            <div className="grid grid-cols-2 gap-4">
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Meta Diária (Qtd)</label><input type="number" className="w-full border p-2 rounded" value={target.targetDaily || ''} onChange={e => setTarget({...target, targetDaily: parseFloat(e.target.value)})} /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1">Bônus por Item</label><InputMoney value={target.unitRate} onChange={v => setTarget({...target, unitRate: v})} /></div>
-            </div>
-            <button onClick={addTarget} className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">Salvar Meta</button>
-          </div>
-          <ul className="space-y-2">
-            {targets.map(t => (
-              <li key={t.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
-                <div><div className="font-bold">{t.metricName}</div><div className="text-xs text-gray-500">Meta: {t.targetDaily}/dia | Bônus: {formatCurrency(t.unitRate)}/un</div></div>
-                <button onClick={() => setTargets(targets.filter(x => x.id !== t.id))} className="text-red-500"><Trash2 size={16}/></button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {activeTab === 'USERS' && (
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Users size={20}/> Gerenciar Usuários</h3>
-           <div className="space-y-4 mb-6 bg-gray-50 p-4 rounded">
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium">Nome</label>
-                  <input className="w-full border p-2 rounded" value={newUser.name || ''} onChange={e => setNewUser({...newUser, name: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium">Senha/PIN</label>
-                  <input type="text" className="w-full border p-2 rounded" value={newUser.pin || ''} onChange={e => setNewUser({...newUser, pin: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium">Permissão</label>
-                  <select className="w-full border p-2 rounded" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})}>
-                    <option value={Role.EMPLOYEE}>Funcionário</option>
-                    <option value={Role.ADMIN}>Administrador</option>
-                  </select>
-                </div>
-             </div>
-             <button onClick={addUser} className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Cadastrar Usuário</button>
-           </div>
-           <ul className="space-y-2">
-            {users.map(u => (
-              <li key={u.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
-                <div className="flex items-center gap-2">
-                   <div className={`p-2 rounded-full ${u.role === Role.ADMIN ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-                      <Shield size={16} />
-                   </div>
-                   <div>
-                      <div className="font-bold">{u.name}</div>
-                      <div className="text-xs text-gray-500">PIN: {u.pin} | {u.role === Role.ADMIN ? 'Acesso Total' : 'Acesso Restrito'}</div>
-                   </div>
-                </div>
-                {users.length > 1 && <button onClick={() => setUsers(users.filter(x => x.id !== u.id))} className="text-red-500"><Trash2 size={16}/></button>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// --- Inventory View ---
-export const InventoryView: React.FC<{
-  materials: Material[];
-  setMaterials: React.Dispatch<React.SetStateAction<Material[]>>;
-  history: InventoryTransaction[];
-  setHistory: React.Dispatch<React.SetStateAction<InventoryTransaction[]>>;
-  currentUser: User;
-}> = ({ materials, setMaterials, history, setHistory, currentUser }) => {
-  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ unit: Unit.UN, lossPercentage: 0 });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [historyFilter, setHistoryFilter] = useState<'ALL' | 'LOSS'>('ALL');
-  
-  // Modal State
-  const [stockModal, setStockModal] = useState<{isOpen: boolean, type: 'ADD'|'LOSS', materialId: string, name: string}>({
-    isOpen: false, type: 'ADD', materialId: '', name: ''
-  });
-  const [stockQtyInput, setStockQtyInput] = useState<string>('');
-
-  const addMaterial = () => {
-    if (!newMaterial.name || !newMaterial.costPerUnit) return;
-    
-    if (editingId) {
-      setMaterials(materials.map(m => m.id === editingId ? { ...m, ...newMaterial as Material } : m));
-      setEditingId(null);
-    } else {
-      const item: Material = {
-        id: Date.now().toString(),
-        name: newMaterial.name,
-        unit: newMaterial.unit || Unit.UN,
-        costPerUnit: Number(newMaterial.costPerUnit),
-        currentStock: Number(newMaterial.currentStock || 0),
-        minStock: Number(newMaterial.minStock || 0),
-        lossPercentage: Number(newMaterial.lossPercentage || 0)
-      };
-      setMaterials([...materials, item]);
-    }
-    setNewMaterial({ unit: Unit.UN, lossPercentage: 0, name: '', costPerUnit: 0, currentStock: 0, minStock: 0 });
-  };
-
-  const handleEdit = (m: Material) => {
-    setEditingId(m.id);
-    setNewMaterial(m);
-    window.scrollTo(0,0);
-  };
-
-  const handleDeleteHistory = (id: string) => {
-    if(confirm('Tem certeza que deseja excluir este registro?')) {
-      setHistory(history.filter(h => h.id !== id));
-    }
-  };
-
-  const openStockModal = (m: Material, type: 'ADD'|'LOSS') => {
-    setStockModal({ isOpen: true, type, materialId: m.id, name: m.name });
-    setStockQtyInput('');
-  };
-
-  const confirmStockUpdate = () => {
-    const val = parseFloat(stockQtyInput);
-    if (!val || val <= 0) {
-      alert("Por favor digite uma quantidade válida");
-      return;
-    }
-    
-    setMaterials(materials.map(m => {
-      if (m.id === stockModal.materialId) {
-        const newStock = stockModal.type === 'ADD' ? m.currentStock + val : m.currentStock - val;
-        return { ...m, currentStock: newStock };
-      }
-      return m;
-    }));
-
-    // LOG TRANSACTION
-    const log: InventoryTransaction = {
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
-      materialId: stockModal.materialId,
-      materialName: stockModal.name,
-      type: stockModal.type,
-      quantity: val,
-      userName: currentUser.name,
-      userId: currentUser.id // NEW: Track User ID
-    };
-    setHistory([log, ...history]);
-
-    setStockModal({ ...stockModal, isOpen: false });
-  };
-
-  const filteredHistory = historyFilter === 'ALL' ? history : history.filter(h => h.type === 'LOSS');
-
-  return (
-    <div className="space-y-6 relative">
-      {/* Stock Update Modal */}
-      {stockModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
-             <h3 className={`text-lg font-bold mb-2 flex items-center gap-2 ${stockModal.type === 'ADD' ? 'text-green-700' : 'text-red-700'}`}>
-               {stockModal.type === 'ADD' ? <PlusCircle /> : <MinusCircle />}
-               {stockModal.type === 'ADD' ? 'Adicionar Estoque' : 'Registrar Perda/Uso'}
-             </h3>
-             <p className="text-gray-600 text-sm mb-4">
-               {stockModal.type === 'ADD' ? `Entrada de material para: ${stockModal.name}` : `Saída de material para: ${stockModal.name}`}
-             </p>
-             <input 
-                autoFocus
-                type="number" 
-                className="w-full border-2 border-gray-300 rounded p-2 text-xl text-center mb-4 focus:border-blue-500 outline-none"
-                placeholder="Quantidade"
-                value={stockQtyInput}
-                onChange={e => setStockQtyInput(e.target.value)}
-             />
-             <div className="flex gap-3">
-               <button onClick={() => setStockModal({...stockModal, isOpen: false})} className="flex-1 py-2 bg-gray-200 rounded font-bold text-gray-700 hover:bg-gray-300">Cancelar</button>
-               <button onClick={confirmStockUpdate} className={`flex-1 py-2 rounded font-bold text-white ${stockModal.type === 'ADD' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                 Confirmar
-               </button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Package /> Gestão de Insumos</h2>
-      
-      {/* Add/Edit Form */}
-      <div className={`p-4 rounded-lg shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-4 items-end ${editingId ? 'bg-yellow-50 border-yellow-200' : 'bg-white'}`}>
-        <div className="col-span-1 md:col-span-3 text-sm font-bold text-gray-500 uppercase mb-2 border-b pb-1">
-          {editingId ? 'Editando Insumo' : 'Novo Insumo'}
-        </div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">Nome do Insumo</label><input type="text" className="block w-full border rounded-md p-2" value={newMaterial.name || ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} /></div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">Unidade</label><select className="block w-full border rounded-md p-2" value={newMaterial.unit} onChange={e => setNewMaterial({...newMaterial, unit: e.target.value as Unit})}>{Object.values(Unit).map(u => <option key={u} value={u}>{u}</option>)}</select></div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">Custo Unit.</label><InputMoney value={newMaterial.costPerUnit} onChange={v => setNewMaterial({...newMaterial, costPerUnit: v})} /></div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">Estoque Atual</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.currentStock} onChange={e => setNewMaterial({...newMaterial, currentStock: parseFloat(e.target.value)})} /></div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">Estoque Mínimo (Alerta)</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.minStock} onChange={e => setNewMaterial({...newMaterial, minStock: parseFloat(e.target.value)})} /></div>
-        <div><label className="block text-xs font-bold text-gray-500 mb-1">% Perda Aceitável</label><input type="number" className="block w-full border rounded-md p-2" value={newMaterial.lossPercentage} onChange={e => setNewMaterial({...newMaterial, lossPercentage: parseFloat(e.target.value)})} /></div>
-        <div className="flex gap-2">
-          {editingId && <button onClick={() => { setEditingId(null); setNewMaterial({unit: Unit.UN}); }} className="bg-gray-500 text-white px-4 py-2 rounded-md">Cancelar</button>}
-          <button onClick={addMaterial} className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex items-center gap-2 justify-center"><Save size={18} /> {editingId ? 'Salvar' : 'Cadastrar'}</button>
-        </div>
-      </div>
-
-      {/* List */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nome</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estoque</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ações Rápidas</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200 text-sm">
-            {materials.map(m => {
-              const isLowStock = m.currentStock <= m.minStock;
-              return (
-                <tr key={m.id}>
-                  <td className="px-4 py-3 font-medium text-gray-800">{m.name}</td>
-                  <td className="px-4 py-3">{m.currentStock} {m.unit}</td>
-                  <td className="px-4 py-3">
-                    {isLowStock ? <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 items-center gap-1"><AlertTriangle size={12} /> Baixo</span> : <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">OK</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium flex justify-end gap-2">
-                    <button title="Dar Entrada" onClick={() => openStockModal(m, 'ADD')} className="text-green-600 hover:bg-green-50 p-1 rounded"><PlusCircle size={18}/></button>
-                    <button title="Registrar Perda" onClick={() => openStockModal(m, 'LOSS')} className="text-orange-600 hover:bg-orange-50 p-1 rounded"><MinusCircle size={18}/></button>
-                    <button title="Editar" onClick={() => handleEdit(m)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit2 size={18}/></button>
-                    <button title="Excluir" onClick={() => setMaterials(materials.filter(mat => mat.id !== m.id))} className="text-red-600 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Logs Table */}
-      <div className="mt-10">
-        <div className="flex items-center justify-between mb-4">
-           <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2"><FileText/> Histórico de Movimentações</h3>
-           <div className="flex gap-2">
-             <button onClick={() => setHistoryFilter('ALL')} className={`px-3 py-1 rounded text-sm ${historyFilter==='ALL' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>Todos</button>
-             <button onClick={() => setHistoryFilter('LOSS')} className={`px-3 py-1 rounded text-sm ${historyFilter==='LOSS' ? 'bg-red-600 text-white' : 'bg-gray-200'}`}>Apenas Perdas</button>
-           </div>
-        </div>
-        <div className="bg-white rounded border max-h-60 overflow-y-auto">
-           <table className="min-w-full text-sm">
-             <thead className="bg-gray-100 sticky top-0">
-               <tr>
-                 <th className="p-3 text-left">Data</th>
-                 <th className="p-3 text-left">Insumo</th>
-                 <th className="p-3 text-left">Tipo</th>
-                 <th className="p-3 text-right">Qtd</th>
-                 <th className="p-3 text-right">Resp.</th>
-                 {currentUser.role === Role.ADMIN && <th className="p-3 text-right">Ações</th>}
-               </tr>
-             </thead>
-             <tbody>
-               {filteredHistory.length === 0 && <tr><td colSpan={currentUser.role === Role.ADMIN ? 6 : 5} className="p-4 text-center text-gray-400">Nenhum registro encontrado.</td></tr>}
-               {filteredHistory.map(h => (
-                 <tr key={h.id} className="border-b hover:bg-gray-50">
-                    <td className="p-3 text-gray-600">{formatDate(h.date)}</td>
-                    <td className="p-3 font-medium">{h.materialName}</td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${h.type === 'ADD' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {h.type === 'ADD' ? 'ENTRADA' : 'PERDA'}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right font-mono">{h.quantity}</td>
-                    <td className="p-3 text-right text-gray-500 text-xs">{h.userName}</td>
-                    {currentUser.role === Role.ADMIN && (
-                       <td className="p-3 text-right">
-                          <button onClick={() => handleDeleteHistory(h.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
-                       </td>
-                    )}
-                 </tr>
-               ))}
-             </tbody>
-           </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- Product View ---
-export const ProductView: React.FC<{
-  products: Product[];
-  setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
-  materials: Material[];
-}> = ({ products, setProducts, materials }) => {
-  const [newProduct, setNewProduct] = useState<Partial<Product>>({ materials: [] });
-  const [selectedMatId, setSelectedMatId] = useState<string>('');
-  const [selectedMatQty, setSelectedMatQty] = useState<number>(0);
-  const [aiDescription, setAiDescription] = useState<string>('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  const addIngredient = () => {
-    if(!selectedMatId || selectedMatQty <= 0) return;
-    const current = newProduct.materials || [];
-    setNewProduct({ ...newProduct, materials: [...current, { materialId: selectedMatId, quantity: selectedMatQty }] });
-    setSelectedMatId('');
-    setSelectedMatQty(0);
-  };
-
-  const calculateCost = (prodItems: Product['materials']) => {
-    if (!prodItems) return 0;
-    return prodItems.reduce((acc, item) => {
-      const mat = materials.find(m => m.id === item.materialId);
-      return acc + (mat ? mat.costPerUnit * item.quantity : 0);
-    }, 0);
-  };
-
-  const costPrice = calculateCost(newProduct.materials || []) || 0;
-
-  const handleSave = () => {
-    if (!newProduct.name || !newProduct.sellingPrice) return;
-
-    if (editingId) {
-       setProducts(products.map(p => p.id === editingId ? { ...newProduct, id: p.id, materials: newProduct.materials || [] } as Product : p));
-       setEditingId(null);
-    } else {
-       const prod: Product = {
-          id: Date.now().toString(),
-          name: newProduct.name,
-          isKit: false,
-          materials: newProduct.materials || [],
-          sellingPrice: Number(newProduct.sellingPrice),
-          laborCost: Number(newProduct.laborCost || 0),
-       };
-       setProducts([...products, prod]);
-    }
-    setNewProduct({ materials: [] });
-    setAiDescription('');
-  };
-
-  const startEdit = (p: Product) => {
-     setEditingId(p.id);
-     setNewProduct({ ...p });
-     window.scrollTo(0,0);
-  };
-  
-  const cancelEdit = () => {
-     setEditingId(null);
-     setNewProduct({ materials: [] });
-     setAiDescription('');
-  }
-
-  const handleGenerateDescription = async () => {
-    if (!newProduct.name) return;
-    const matNames = newProduct.materials?.map(pm => materials.find(m => m.id === pm.materialId)?.name || '') || [];
-    const desc = await suggestProductDescription(newProduct.name, matNames);
-    setAiDescription(desc);
-  };
-
-  return (
-    <div className="space-y-6">
-       <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><ShoppingCart /> Produtos e Kits</h2>
-
-       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         {/* Creator */}
-         <div className="bg-white p-6 rounded-lg shadow-sm border space-y-4">
-            <h3 className="font-semibold text-lg">{editingId ? 'Editar Produto' : 'Novo Produto / Kit'}</h3>
-            <div>
-              <label className="block text-sm font-medium">Nome do Produto</label>
-              <input className="w-full border rounded p-2" value={newProduct.name || ''} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
-            </div>
-
-            <div className="bg-gray-50 p-3 rounded border">
-              <h4 className="text-sm font-bold mb-2">Receita / Composição</h4>
-              <div className="flex gap-2 mb-2">
-                <select className="border rounded p-1 flex-1" value={selectedMatId} onChange={e => setSelectedMatId(e.target.value)}>
-                  <option value="">Selecione Insumo</option>
-                  {materials.map(m => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
-                </select>
-                <input type="number" placeholder="Qtd" className="border rounded p-1 w-20" value={selectedMatQty} onChange={e => setSelectedMatQty(Number(e.target.value))} />
-                <button onClick={addIngredient} className="bg-green-600 text-white px-2 rounded"><Plus size={16}/></button>
-              </div>
-              <ul className="text-sm space-y-1">
-                {newProduct.materials?.map((pm, idx) => {
-                  const m = materials.find(mat => mat.id === pm.materialId);
-                  return (
-                    <li key={idx} className="flex justify-between border-b pb-1 items-center">
-                        <span>{m?.name} (x{pm.quantity})</span> 
-                        <button onClick={() => {
-                            const newMats = [...(newProduct.materials || [])];
-                            newMats.splice(idx, 1);
-                            setNewProduct({...newProduct, materials: newMats});
-                        }} className="text-red-500"><Trash2 size={12}/></button>
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="text-right mt-2 font-bold text-gray-600">Custo Material: {formatCurrency(costPrice)}</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm">Mão de Obra</label>
-                <InputMoney value={newProduct.laborCost} onChange={v => setNewProduct({...newProduct, laborCost: v})} />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-blue-700">Preço Venda Base</label>
-                <InputMoney value={newProduct.sellingPrice} onChange={v => setNewProduct({...newProduct, sellingPrice: v})} />
-              </div>
-            </div>
-            <div className="bg-blue-50 p-2 rounded text-xs text-blue-800">Nota: As taxas de marketplace serão calculadas na tela de Vendas.</div>
-            
-            <div className="flex gap-2">
-               {editingId && <button onClick={cancelEdit} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Cancelar</button>}
-               <button onClick={handleSave} className="flex-1 bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium">
-                  {editingId ? 'Atualizar Produto' : 'Salvar Produto'}
-               </button>
-            </div>
-
-            <div className="pt-2 border-t">
-              <button onClick={handleGenerateDescription} className="text-xs text-purple-600 flex items-center gap-1 mb-2 hover:underline"><BrainCircuit size={14}/> Gerar Descrição com IA</button>
-              {aiDescription && <p className="text-xs text-gray-600 italic bg-gray-50 p-2 rounded border">{aiDescription}</p>}
-            </div>
-         </div>
-
-         {/* List */}
-         <div className="bg-white rounded shadow overflow-hidden h-full overflow-y-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr>
-                    <th className="p-2 text-left">Produto</th>
-                    <th className="p-2 text-right">Custo Base</th>
-                    <th className="p-2 text-right">Preço Venda</th>
-                    <th className="p-2 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map(p => {
-                     const c = calculateCost(p.materials) + p.laborCost;
-                     return (
-                       <tr key={p.id} className="border-t hover:bg-gray-50">
-                         <td className="p-2"><div className="font-bold">{p.name}</div><div className="text-xs text-gray-500">{p.materials.length} insumos</div></td>
-                         <td className="p-2 text-right text-gray-600">{formatCurrency(c)}</td>
-                         <td className="p-2 text-right font-bold">{formatCurrency(p.sellingPrice)}</td>
-                         <td className="p-2 text-right flex justify-end gap-2">
-                            <button onClick={() => startEdit(p)} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={14}/></button>
-                            <button onClick={() => setProducts(products.filter(x => x.id !== p.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
-                         </td>
-                       </tr>
-                     )
-                  })}
-                </tbody>
-              </table>
-         </div>
-       </div>
-    </div>
-  );
-};
-
-// --- SalesAndOpsView ---
-export const SalesAndOpsView: React.FC<{
-  products: Product[];
-  materials: Material[];
-  setMaterials: React.Dispatch<React.SetStateAction<Material[]>>;
-  sales: Sale[];
-  setSales: React.Dispatch<React.SetStateAction<Sale[]>>;
-  logs: OperationalLog[];
-  setLogs: React.Dispatch<React.SetStateAction<OperationalLog[]>>;
-  targets: OperationalTarget[];
-  marketplaces: Marketplace[];
-}> = ({ products, materials, setMaterials, sales, setSales, logs, setLogs, targets, marketplaces }) => {
-  const [tab, setTab] = useState<'SALES'|'OPS'>('SALES');
-  const [newSale, setNewSale] = useState<{ quantity: number; paymentMethod: PaymentMethod }>({ quantity: 1, paymentMethod: PaymentMethod.PIX });
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [selectedMkpId, setSelectedMkpId] = useState('');
-  
-  // Ops state
-  const [opsMetricId, setOpsMetricId] = useState('');
-  const [opsValue, setOpsValue] = useState(0);
-
-  // Stock Alert Logic
-  const [stockAlertModal, setStockAlertModal] = useState<{isOpen: boolean, missingItems: any[]}>({ isOpen: false, missingItems: [] });
-  const [pendingSale, setPendingSale] = useState<any>(null);
-
-  const [customerName, setCustomerName] = useState('');
-
-  const checkStockAvailability = (prodId: string, quantity: number) => {
-     const product = products.find(p => p.id === prodId);
-     if (!product) return [];
-
-     const missing: any[] = [];
-     product.materials.forEach(req => {
-        const mat = materials.find(m => m.id === req.materialId);
-        if (mat) {
-           // Calculate total needed including what's already in the cart if we had one, 
-           // but here we do direct sale, so check current stock.
-           const needed = req.quantity * quantity;
-           if (mat.currentStock - needed < mat.minStock) {
-              missing.push({ 
-                 name: mat.name, 
-                 current: mat.currentStock, 
-                 needed, 
-                 remaining: mat.currentStock - needed 
-              });
-           }
-        }
-     });
-     return missing;
-  };
-
-  const executeSale = (saleData: any) => {
-     const { product, mkp, quantity } = saleData;
-     
-     const totalAmount = product.sellingPrice * quantity;
-     const varFee = totalAmount * (mkp.variableFeePercent / 100);
-     const adsFee = totalAmount * (mkp.adsFeePercent / 100);
-     const tax = totalAmount * (mkp.taxPercent / 100);
-     const totalFees = mkp.fixedFee + varFee + adsFee + tax + mkp.shippingCost;
-     const netRevenue = totalAmount - totalFees;
-
-     const costSnapshot = product.materials.reduce((acc: number, pm: any) => {
-        const m = materials.find(mat => mat.id === pm.materialId);
-        return acc + (m ? m.costPerUnit * pm.quantity : 0);
-     }, 0) * quantity + (product.laborCost * quantity);
-
-     const sale: Sale = {
-       id: Date.now().toString(),
-       date: new Date().toISOString(),
-       items: [{ productId: product.id, quantity: quantity, unitPrice: product.sellingPrice }],
-       marketplaceId: mkp.id,
-       platform: mkp.name,
-       paymentMethod: newSale.paymentMethod as PaymentMethod,
-       totalAmount,
-       netRevenue,
-       costSnapshot,
-       feeSnapshot: totalFees,
-       status: 'PENDING',
-       customerName: customerName // New
-     };
-
-     setSales([sale, ...sales]);
-
-     // Deduct Stock
-     const newMaterials = [...materials];
-     product.materials.forEach((pm: any) => {
-        const mIndex = newMaterials.findIndex(m => m.id === pm.materialId);
-        if (mIndex >= 0) {
-          newMaterials[mIndex].currentStock -= (pm.quantity * quantity);
-        }
-     });
-     setMaterials(newMaterials);
-
-     // Reset
-     setNewSale({ quantity: 1, paymentMethod: PaymentMethod.PIX });
-     setSelectedProductId('');
-     setCustomerName('');
-     setStockAlertModal({ isOpen: false, missingItems: [] });
-     setPendingSale(null);
-  };
-
-  const initiateSale = () => {
-    const product = products.find(p => p.id === selectedProductId);
-    const mkp = marketplaces.find(m => m.id === selectedMkpId);
-    if (!product || !mkp || !newSale.quantity) return;
-    const quantity = Number(newSale.quantity);
-    
-    const missing = checkStockAvailability(product.id, quantity);
-    const saleData = { product, mkp, quantity };
-
-    if (missing.length > 0) {
-       setPendingSale(saleData);
-       setStockAlertModal({ isOpen: true, missingItems: missing });
-    } else {
-       executeSale(saleData);
-    }
-  };
-
-  const updateStatus = (saleId: string, newStatus: Sale['status']) => {
-     setSales(sales.map(s => s.id === saleId ? { ...s, status: newStatus } : s));
-  };
-
-  const handleLogOps = () => {
-    const target = targets.find(t => t.id === opsMetricId);
-    if (!target || opsValue <= 0) return;
-    
-    setLogs([{
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
-      metricName: target.metricName,
-      value: Number(opsValue)
-    }, ...logs]);
-    setOpsValue(0);
-  };
-
-  return (
-    <div className="space-y-6 relative">
-      {/* Stock Alert Modal */}
-      {stockAlertModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-4">
-           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md border-l-4 border-red-500">
-              <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center gap-2"><AlertTriangle /> Atenção: Estoque Insuficiente</h3>
-              <p className="text-sm text-gray-600 mb-4">A venda deste produto fará com que os seguintes insumos fiquem abaixo do mínimo ou negativos:</p>
-              <ul className="bg-red-50 p-3 rounded mb-6 space-y-2 text-sm">
-                 {stockAlertModal.missingItems.map((m, idx) => (
-                    <li key={idx} className="flex justify-between">
-                       <span className="font-bold text-gray-700">{m.name}</span>
-                       <span className="text-red-600">Restará: {m.remaining.toFixed(2)}</span>
-                    </li>
-                 ))}
-              </ul>
-              <div className="flex gap-3">
-                 <button onClick={() => setStockAlertModal({isOpen: false, missingItems: []})} className="flex-1 py-2 border border-gray-300 rounded text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
-                 <button onClick={() => executeSale(pendingSale)} className="flex-1 py-2 bg-red-600 text-white rounded font-bold hover:bg-red-700">Confirmar Venda Assim Mesmo</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      <div className="flex border-b">
-         <button onClick={() => setTab('SALES')} className={`px-6 py-3 font-bold ${tab==='SALES' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Vendas</button>
-         <button onClick={() => setTab('OPS')} className={`px-6 py-3 font-bold ${tab==='OPS' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}>Produção</button>
-      </div>
-
-      {tab === 'SALES' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           <div className="bg-white p-6 rounded shadow lg:col-span-1 h-fit">
-              <h3 className="font-bold text-lg mb-4">Nova Venda</h3>
-              <div className="space-y-4">
-                 <div>
-                   <label className="block text-xs font-bold text-gray-500">Produto</label>
-                   <select className="w-full border p-2 rounded" value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)}>
-                     <option value="">Selecione...</option>
-                     {products.map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.sellingPrice)})</option>)}
-                   </select>
-                 </div>
-                 <div>
-                   <label className="block text-xs font-bold text-gray-500">Canal de Venda</label>
-                   <select className="w-full border p-2 rounded" value={selectedMkpId} onChange={e => setSelectedMkpId(e.target.value)}>
-                     <option value="">Selecione...</option>
-                     {marketplaces.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                   </select>
-                 </div>
-                 <div>
-                    <label className="block text-xs font-bold text-gray-500">Cliente (Opcional)</label>
-                    <input type="text" className="w-full border p-2 rounded" value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Nome do cliente..." />
-                 </div>
-                 <div className="grid grid-cols-2 gap-2">
-                    <div>
-                       <label className="block text-xs font-bold text-gray-500">Qtd</label>
-                       <input type="number" className="w-full border p-2 rounded" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: Number(e.target.value)})} />
-                    </div>
-                    <div>
-                       <label className="block text-xs font-bold text-gray-500">Pagamento</label>
-                       <select className="w-full border p-2 rounded" value={newSale.paymentMethod} onChange={e => setNewSale({...newSale, paymentMethod: e.target.value as PaymentMethod})}>
-                          {Object.values(PaymentMethod).map(pm => <option key={pm} value={pm}>{pm}</option>)}
-                       </select>
-                    </div>
-                 </div>
-                 <button onClick={initiateSale} className="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700">Registrar Venda</button>
-              </div>
-           </div>
-           <div className="lg:col-span-2 bg-white rounded shadow overflow-hidden flex flex-col">
-              <div className="p-4 border-b bg-gray-50 font-bold text-gray-700">Fila de Produção (Últimos Pedidos)</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-100">
-                    <tr>
-                        <th className="p-3 text-left">Data</th>
-                        <th className="p-3 text-left">Cliente</th>
-                        <th className="p-3 text-left">Produto</th>
-                        <th className="p-3 text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sales.slice(0, 10).map(s => (
-                        <tr key={s.id} className="border-b">
-                          <td className="p-3">{formatDate(s.date)}</td>
-                          <td className="p-3">{s.customerName || '-'}</td>
-                          <td className="p-3 font-medium">{products.find(p => p.id === s.items[0].productId)?.name} (x{s.items[0].quantity})</td>
-                          <td className="p-3 text-center">
-                              <select 
-                                value={s.status} 
-                                onChange={e => updateStatus(s.id, e.target.value as any)}
-                                className={`p-1 rounded text-xs font-bold border-none outline-none cursor-pointer ${
-                                  s.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : 
-                                  s.status === 'IN_PRODUCTION' ? 'bg-blue-100 text-blue-800' : 
-                                  'bg-green-100 text-green-800'
-                                }`}
-                              >
-                                <option value="PENDING">PENDENTE</option>
-                                <option value="IN_PRODUCTION">EM PRODUÇÃO</option>
-                                <option value="COMPLETED">ENVIADO</option>
-                              </select>
-                          </td>
-                        </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {tab === 'OPS' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-           <div className="bg-white p-6 rounded shadow h-fit">
-              <h3 className="font-bold text-lg mb-4">Apontamento de Produção</h3>
-              <div className="space-y-4">
-                 <div>
-                    <label className="block text-sm font-medium">Meta / Tarefa</label>
-                    <select className="w-full border p-2 rounded" value={opsMetricId} onChange={e => setOpsMetricId(e.target.value)}>
-                       <option value="">Selecione...</option>
-                       {targets.map(t => <option key={t.id} value={t.id}>{t.metricName}</option>)}
-                    </select>
-                 </div>
-                 <div>
-                    <label className="block text-sm font-medium">Quantidade Realizada</label>
-                    <input type="number" className="w-full border p-2 rounded" value={opsValue} onChange={e => setOpsValue(parseFloat(e.target.value))} />
-                 </div>
-                 <button onClick={handleLogOps} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">Registrar</button>
-              </div>
-           </div>
-           <div className="bg-white rounded shadow overflow-hidden">
-              <div className="p-4 border-b bg-gray-50 font-bold text-gray-700">Histórico de Produção</div>
-              <ul className="divide-y">
-                 {logs.map(l => (
-                    <li key={l.id} className="p-4 flex justify-between items-center">
-                       <div>
-                          <div className="font-bold text-gray-800">{l.metricName}</div>
-                          <div className="text-xs text-gray-500">{formatDate(l.date)}</div>
-                       </div>
-                       <div className="text-xl font-bold text-blue-600">+{l.value}</div>
-                    </li>
-                 ))}
-              </ul>
-           </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -1689,6 +1522,286 @@ export const ReportsView: React.FC<{
              </div>
           </div>
        </div>
+    </div>
+  );
+};
+
+// --- Settings View ---
+export const SettingsView: React.FC<{
+  marketplaces: Marketplace[];
+  setMarketplaces: React.Dispatch<React.SetStateAction<Marketplace[]>>;
+  targets: OperationalTarget[];
+  setTargets: React.Dispatch<React.SetStateAction<OperationalTarget[]>>;
+  users: User[];
+  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
+  systemConfig: SystemConfig;
+  setSystemConfig: React.Dispatch<React.SetStateAction<SystemConfig>>;
+  onExportData: () => void;
+  onImportData: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}> = ({ marketplaces, setMarketplaces, targets, setTargets, users, setUsers, systemConfig, setSystemConfig, onExportData, onImportData }) => {
+  
+  const [mkp, setMkp] = useState<Partial<Marketplace>>({});
+  const [target, setTarget] = useState<Partial<OperationalTarget>>({});
+  const [newUser, setNewUser] = useState<Partial<User>>({ role: Role.EMPLOYEE });
+  const [activeTab, setActiveTab] = useState<'GENERAL'|'STORES'|'GOALS'|'USERS'|'DATA'>('GENERAL');
+  
+  // Editing states
+  const [editingMkpId, setEditingMkpId] = useState<string | null>(null);
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+
+  const handleSaveMkp = () => {
+    if (!mkp.name) return;
+    
+    if (editingMkpId) {
+       // Update existing
+       const updatedMkp: Marketplace = {
+          id: editingMkpId,
+          name: mkp.name,
+          fixedFee: Number(mkp.fixedFee || 0),
+          variableFeePercent: Number(mkp.variableFeePercent || 0),
+          adsFeePercent: Number(mkp.adsFeePercent || 0),
+          shippingCost: Number(mkp.shippingCost || 0),
+          taxPercent: Number(mkp.taxPercent || 0),
+       };
+       setMarketplaces(marketplaces.map(m => m.id === editingMkpId ? updatedMkp : m));
+       setEditingMkpId(null);
+    } else {
+       // Create new
+       const newMkp: Marketplace = {
+         id: Date.now().toString(),
+         name: mkp.name,
+         fixedFee: Number(mkp.fixedFee || 0),
+         variableFeePercent: Number(mkp.variableFeePercent || 0),
+         adsFeePercent: Number(mkp.adsFeePercent || 0),
+         shippingCost: Number(mkp.shippingCost || 0),
+         taxPercent: Number(mkp.taxPercent || 0),
+       };
+       setMarketplaces([...marketplaces, newMkp]);
+    }
+    setMkp({});
+  };
+
+  const startEditMkp = (m: Marketplace) => {
+     setEditingMkpId(m.id);
+     setMkp(m);
+     window.scrollTo(0,0);
+  };
+
+  const cancelEditMkp = () => {
+     setEditingMkpId(null);
+     setMkp({});
+  };
+
+  const handleSaveTarget = () => {
+    if (!target.metricName) return;
+    
+    if (editingTargetId) {
+       // Update existing
+       const updatedTarget: OperationalTarget = {
+          id: editingTargetId,
+          metricName: target.metricName,
+          targetDaily: Number(target.targetDaily || 0),
+          unitRate: Number(target.unitRate || 0),
+       };
+       setTargets(targets.map(t => t.id === editingTargetId ? updatedTarget : t));
+       setEditingTargetId(null);
+    } else {
+       // Create new
+       const newTarget: OperationalTarget = {
+         id: Date.now().toString(),
+         metricName: target.metricName,
+         targetDaily: Number(target.targetDaily || 0),
+         unitRate: Number(target.unitRate || 0),
+       };
+       setTargets([...targets, newTarget]);
+    }
+    setTarget({});
+  };
+
+  const startEditTarget = (t: OperationalTarget) => {
+    setEditingTargetId(t.id);
+    setTarget(t);
+    window.scrollTo(0,0);
+  };
+
+  const cancelEditTarget = () => {
+     setEditingTargetId(null);
+     setTarget({});
+  };
+
+  const addUser = () => {
+    if (!newUser.name || !newUser.pin) {
+      alert("Nome e senha são obrigatórios.");
+      return;
+    }
+    setUsers([...users, { 
+      id: Date.now().toString(), 
+      name: newUser.name, 
+      pin: newUser.pin, 
+      role: newUser.role || Role.EMPLOYEE 
+    }]);
+    setNewUser({ role: Role.EMPLOYEE, name: '', pin: '' });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex space-x-4 border-b overflow-x-auto">
+        <button onClick={() => setActiveTab('GENERAL')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'GENERAL' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Geral / Avisos</button>
+        <button onClick={() => setActiveTab('STORES')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'STORES' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Lojas & Taxas</button>
+        <button onClick={() => setActiveTab('GOALS')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'GOALS' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Metas & Bônus</button>
+        <button onClick={() => setActiveTab('USERS')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'USERS' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Usuários</button>
+        <button onClick={() => setActiveTab('DATA')} className={`py-2 px-4 font-medium whitespace-nowrap ${activeTab === 'DATA' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500'}`}>Dados & Backup</button>
+      </div>
+
+      {activeTab === 'GENERAL' && (
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><FileText size={20}/> Quadro de Avisos (Relatório do Dia)</h3>
+           <p className="text-sm text-gray-500 mb-2">O texto abaixo aparecerá para os funcionários ao clicarem em "Relatório do Dia". Use para comunicar tarefas ou avisos importantes.</p>
+           <textarea 
+             className="w-full h-40 border p-4 rounded bg-yellow-50 focus:ring-2 focus:ring-yellow-400 outline-none"
+             placeholder="Ex: Hoje precisamos focar na produção dos kits de dia das mães..."
+             value={systemConfig.dailyMessage}
+             onChange={e => setSystemConfig({...systemConfig, dailyMessage: e.target.value})}
+           />
+        </div>
+      )}
+
+      {activeTab === 'STORES' && (
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><ShoppingCart size={20}/> {editingMkpId ? 'Editar Loja' : 'Cadastro de Lojas'}</h3>
+          <div className={`space-y-4 mb-6 p-4 rounded ${editingMkpId ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
+            <div>
+              <label className="block text-sm font-medium">Nome da Loja (ex: ML Premium)</label>
+              <input className="w-full border p-2 rounded" value={mkp.name || ''} onChange={e => setMkp({...mkp, name: e.target.value})} />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Taxa Fixa</label><InputMoney value={mkp.fixedFee} onChange={v => setMkp({...mkp, fixedFee: v})} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Comissão (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.variableFeePercent || ''} onChange={e => setMkp({...mkp, variableFeePercent: parseFloat(e.target.value)})} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">ADS / MKT (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.adsFeePercent || ''} onChange={e => setMkp({...mkp, adsFeePercent: parseFloat(e.target.value)})} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Imposto (%)</label><input type="number" className="w-full border p-2 rounded" placeholder="%" value={mkp.taxPercent || ''} onChange={e => setMkp({...mkp, taxPercent: parseFloat(e.target.value)})} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Frete Médio</label><InputMoney value={mkp.shippingCost} onChange={v => setMkp({...mkp, shippingCost: v})} /></div>
+            </div>
+            <div className="flex gap-2">
+               {editingMkpId && <button onClick={cancelEditMkp} className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500">Cancelar</button>}
+               <button onClick={handleSaveMkp} className="flex-1 bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700">{editingMkpId ? 'Atualizar Loja' : 'Salvar Loja'}</button>
+            </div>
+          </div>
+          <ul className="space-y-2">
+            {marketplaces.map(m => (
+              <li key={m.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
+                <div><div className="font-bold">{m.name}</div><div className="text-xs text-gray-500">{m.variableFeePercent}% Com. + {formatCurrency(m.fixedFee)} Fix. | ADS: {m.adsFeePercent}% | Frete: {formatCurrency(m.shippingCost)}</div></div>
+                <div className="flex gap-2">
+                   <button onClick={() => startEditMkp(m)} className="text-blue-500 hover:bg-blue-100 p-1 rounded"><Edit2 size={16}/></button>
+                   <button onClick={() => setMarketplaces(marketplaces.filter(x => x.id !== m.id))} className="text-red-500 hover:bg-red-100 p-1 rounded"><Trash2 size={16}/></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {activeTab === 'GOALS' && (
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Activity size={20}/> {editingTargetId ? 'Editar Meta' : 'Configuração de Metas'}</h3>
+          <div className={`space-y-4 mb-6 p-4 rounded ${editingTargetId ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
+            <div><label className="block text-sm font-medium">Nome da Métrica</label><input className="w-full border p-2 rounded" value={target.metricName || ''} onChange={e => setTarget({...target, metricName: e.target.value})} /></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Meta Diária (Qtd)</label><input type="number" className="w-full border p-2 rounded" value={target.targetDaily || ''} onChange={e => setTarget({...target, targetDaily: parseFloat(e.target.value)})} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1">Bônus por Item</label><InputMoney value={target.unitRate} onChange={v => setTarget({...target, unitRate: v})} /></div>
+            </div>
+            <div className="flex gap-2">
+               {editingTargetId && <button onClick={cancelEditTarget} className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500">Cancelar</button>}
+               <button onClick={handleSaveTarget} className="flex-1 bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700">{editingTargetId ? 'Atualizar Meta' : 'Salvar Meta'}</button>
+            </div>
+          </div>
+          <ul className="space-y-2">
+            {targets.map(t => (
+              <li key={t.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
+                <div><div className="font-bold">{t.metricName}</div><div className="text-xs text-gray-500">Meta: {t.targetDaily}/dia | Bônus: {formatCurrency(t.unitRate)}/un</div></div>
+                <div className="flex gap-2">
+                   <button onClick={() => startEditTarget(t)} className="text-blue-500 hover:bg-blue-100 p-1 rounded"><Edit2 size={16}/></button>
+                   <button onClick={() => setTargets(targets.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-100 p-1 rounded"><Trash2 size={16}/></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {activeTab === 'USERS' && (
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Users size={20}/> Gerenciar Usuários</h3>
+           <div className="space-y-4 mb-6 bg-gray-50 p-4 rounded">
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium">Nome</label>
+                  <input className="w-full border p-2 rounded" value={newUser.name || ''} onChange={e => setNewUser({...newUser, name: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium">Senha/PIN</label>
+                  <input type="text" className="w-full border p-2 rounded" value={newUser.pin || ''} onChange={e => setNewUser({...newUser, pin: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium">Permissão</label>
+                  <select className="w-full border p-2 rounded" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})}>
+                    <option value={Role.EMPLOYEE}>Funcionário</option>
+                    <option value={Role.ADMIN}>Administrador</option>
+                  </select>
+                </div>
+             </div>
+             <button onClick={addUser} className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Cadastrar Usuário</button>
+           </div>
+           <ul className="space-y-2">
+            {users.map(u => (
+              <li key={u.id} className="flex justify-between items-center p-3 border rounded bg-white hover:bg-gray-50">
+                <div className="flex items-center gap-2">
+                   <div className={`p-2 rounded-full ${u.role === Role.ADMIN ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+                      <Shield size={16} />
+                   </div>
+                   <div>
+                      <div className="font-bold">{u.name}</div>
+                      <div className="text-xs text-gray-500">PIN: {u.pin} | {u.role === Role.ADMIN ? 'Acesso Total' : 'Acesso Restrito'}</div>
+                   </div>
+                </div>
+                {users.length > 1 && <button onClick={() => setUsers(users.filter(x => x.id !== u.id))} className="text-red-500"><Trash2 size={16}/></button>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {activeTab === 'DATA' && (
+         <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Save size={20}/> Backup e Sincronização</h3>
+            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 text-sm text-blue-700">
+               <p className="font-bold mb-1">Como sincronizar PC e Celular?</p>
+               <p>1. No computador, clique em <b>Exportar Dados</b> para baixar o arquivo de backup.</p>
+               <p>2. Envie este arquivo para o seu celular (WhatsApp, Email, Drive).</p>
+               <p>3. No celular, abra o sistema, venha nesta tela e clique em <b>Importar Dados</b>.</p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               <div className="border p-6 rounded text-center hover:bg-gray-50 transition">
+                  <Download size={48} className="mx-auto text-emerald-500 mb-3" />
+                  <h4 className="font-bold text-gray-700">Exportar Backup</h4>
+                  <p className="text-xs text-gray-500 mb-4">Salva todos os produtos, vendas e estoques em um arquivo.</p>
+                  <button onClick={onExportData} className="bg-emerald-600 text-white px-6 py-2 rounded font-bold hover:bg-emerald-700">
+                     Baixar Arquivo
+                  </button>
+               </div>
+
+               <div className="border p-6 rounded text-center hover:bg-gray-50 transition relative">
+                  <Upload size={48} className="mx-auto text-blue-500 mb-3" />
+                  <h4 className="font-bold text-gray-700">Importar Backup</h4>
+                  <p className="text-xs text-gray-500 mb-4">Restaura os dados de um arquivo. Cuidado: Substitui os dados atuais.</p>
+                  <label className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 cursor-pointer inline-block">
+                     Selecionar Arquivo
+                     <input type="file" accept=".json" className="hidden" onChange={onImportData} />
+                  </label>
+               </div>
+            </div>
+         </div>
+      )}
     </div>
   );
 };
